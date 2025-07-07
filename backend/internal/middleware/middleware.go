@@ -1,9 +1,14 @@
 package middleware
 
 import (
+	"net/http"
+	"strings"
 	"time"
-	"github.com/gin-gonic/gin"
+
+	"cloudbp-backend/pkg/auth"
 	"cloudbp-backend/pkg/logger"
+
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
@@ -47,6 +52,58 @@ func Cors() gin.HandlerFunc {
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// JWT认证中间件
+func AuthMiddleware(jwtManager *auth.JWTManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 从请求头获取Authorization
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少Authorization头"})
+			c.Abort()
+			return
+		}
+
+		// 检查Bearer格式
+		parts := strings.SplitN(authHeader, " ", 2)
+		if !(len(parts) == 2 && parts[0] == "Bearer") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization格式错误"})
+			c.Abort()
+			return
+		}
+
+		token := parts[1]
+		
+		// 验证JWT令牌
+		claims, err := jwtManager.ValidateToken(token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的令牌"})
+			c.Abort()
+			return
+		}
+
+		// 将用户信息设置到上下文中
+		c.Set("user_id", claims.UserID)
+		c.Set("username", claims.Username)
+		c.Set("role", claims.Role)
+
+		c.Next()
+	}
+}
+
+// 管理员权限中间件
+func AdminMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, exists := c.Get("role")
+		if !exists || role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+			c.Abort()
 			return
 		}
 
